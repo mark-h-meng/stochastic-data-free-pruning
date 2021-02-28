@@ -4,6 +4,7 @@ import subprocess
 
 SAMPLES = 500
 
+pruning_only = 0
 activation = 'sigmoid'
 
 if activation == 'sigmoid':
@@ -14,18 +15,15 @@ else:
 output = subprocess.call(['python', 'robust_pruning_mlp_cifar.py',
                           '--mode', 'baseline',
                           '--activation', activation,
+                          '--benchmarking', str(pruning_only),
                           '--size', str(SAMPLES)], shell=True)
 
 for index, item in enumerate(hyperparameters):
-    output = subprocess.call(['python', 'robust_pruning_mlp_cifar.py',
-                          '--mode', 'entropy',
-                          '--alpha', item,
-                          '--activation', activation,
-                          '--size', str(SAMPLES)], shell=True)
 
     output = subprocess.call(['python', 'robust_pruning_mlp_cifar.py',
                           '--mode', 'stochastic',
                           '--alpha', item,
                           '--activation', activation,
+                          '--benchmarking', str(pruning_only),
                           '--size', str(SAMPLES)], shell=True)
 print('Task accomplished')

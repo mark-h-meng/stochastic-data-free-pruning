@@ -240,6 +240,8 @@ def calculate_similarity_of_two_intervals(interval_a, interval_b, union_interval
     a_lo, a_hi = interval_a
     b_lo, b_hi = interval_b
     union_lo, union_hi = union_interval
+    if union_hi == union_lo:
+        union_hi += 0.001
     sim_ab = 1 - 0.5 * (abs(a_lo - b_lo) + abs(a_hi - b_hi)) / (union_hi - union_lo)
     return sim_ab
 

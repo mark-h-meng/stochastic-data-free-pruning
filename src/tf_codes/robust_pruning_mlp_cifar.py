@@ -32,13 +32,14 @@ timestamp = time.strftime('%b-%d-%H%M', local_time)
 
 # Specify the mode of pruning
 BASELINE_MODE = False
+BENCHMARKING_MODE = False
 
 # Recursive mode
 # PS: Baseline should is written in non-recursive mode
 RECURSIVE_PRUNING = True
 
 # E.g. TARGET_PRUNING_PERCENTAGE = 0.3 means 30% of hidden units are expected to be pruned off
-TARGET_PRUNING_PERCENTAGE = 0.9
+TARGET_PRUNING_PERCENTAGE = 0.8
 
 # E.g. TARGET_ADV_EPSILON = 0.3 means the maximum perturbation epsilon that we expect our pruned
 #    model to preserve is 0.3 (only applicable to normalized input)
@@ -73,6 +74,7 @@ def main(args):
     BATCH_SIZE_PER_EVALUATION = args.size
     hyper_parameter_alpha = args.alpha
     activation = args.activation
+    BENCHMARKING_MODE = args.benchmarking > 0
 
     hyper_parameter_beta = 1-hyper_parameter_alpha
     hyperparameters = (hyper_parameter_alpha, hyper_parameter_beta)
@@ -91,6 +93,8 @@ def main(args):
         print(">> BASELINE MODE: pruning by saliency only")
         print(">> ACTIVATION: " + str(activation))
         print(">> EVALUATION BATCH SIZE: " + str(BATCH_SIZE_PER_EVALUATION))
+        if BENCHMARKING_MODE:
+            print(">> BENCHMARKING MODE ENABLED")
         print('>' * 50)
         print(bcolors.ENDC)
     elif curr_mode == 'entropy':
@@ -101,6 +105,8 @@ def main(args):
         print(">> ACTIVATION: " + str(activation))
         print(">> EVALUATION BATCH SIZE: " + str(BATCH_SIZE_PER_EVALUATION))
         print(">> HYPER-PARAMETER (ALPHA): " + str(hyper_parameter_alpha))
+        if BENCHMARKING_MODE:
+            print(">> BENCHMARKING MODE ENABLED")
         print('>' * 50)
         print(bcolors.ENDC)
     elif curr_mode == 'stochastic':
@@ -110,6 +116,8 @@ def main(args):
         print(">> STOCHASTIC MODE: pruning by entropy with simulated annealing")
         print(">> EVALUATION BATCH SIZE: " + str(BATCH_SIZE_PER_EVALUATION))
         print(">> HYPER-PARAMETER (ALPHA): " + str(hyper_parameter_alpha))
+        if BENCHMARKING_MODE:
+            print(">> BENCHMARKING MODE ENABLED")
         print('>' * 50)
         print(bcolors.ENDC)
     else:
@@ -177,7 +185,7 @@ def main(args):
         num_units_first_mlp_layer = 64
 
     model = tf.keras.models.load_model(original_model_path)
-
+    print(model.summary())
     model.compile(optimizer=optimizer, loss=tf.keras.losses.SparseCategoricalCrossentropy(), metrics=['accuracy'])
 
     loss, accuracy = model.evaluate(test_images, test_labels, verbose=2)
@@ -186,7 +194,7 @@ def main(args):
     big_map = simprop.get_definition_map(model, input_interval=(0,1))
     # TEMP IMPLEMENTATION ENDS HERE
 
-    if BASELINE_MODE:
+    if BASELINE_MODE and not BENCHMARKING_MODE:
         robust_preservation = adversarial.robustness_evaluation_cifar(model,
                                                                 (test_images, test_labels),
                                                                 TARGET_ADV_EPSILONS,
@@ -299,21 +307,22 @@ def main(args):
             print(" >> Total number of units pruned:", bcolors.BOLD, num_units_pruned, bcolors.ENDC)
 
             model.compile(optimizer=optimizer, loss=tf.keras.losses.SparseCategoricalCrossentropy(), metrics=['accuracy'])
-            robust_preservation = adversarial.robustness_evaluation_cifar(model,
-                                                                    (test_images, test_labels),
-                                                                    TARGET_ADV_EPSILONS,
-                                                                    BATCH_SIZE_PER_EVALUATION)
+            if not BENCHMARKING_MODE:
+                robust_preservation = adversarial.robustness_evaluation_cifar(model,
+                                                                        (test_images, test_labels),
+                                                                        TARGET_ADV_EPSILONS,
+                                                                        BATCH_SIZE_PER_EVALUATION)
 
-            loss, accuracy = model.evaluate(test_images, test_labels, verbose=2)
+                loss, accuracy = model.evaluate(test_images, test_labels, verbose=2)
 
-            # Update score_board and tape_of_moves
-            score_board.append(robust_preservation)
-            accuracy_board.append((round(loss, 4), round(accuracy, 4)))
+                # Update score_board and tape_of_moves
+                score_board.append(robust_preservation)
+                accuracy_board.append((round(loss, 4), round(accuracy, 4)))
+
+                print(bcolors.OKGREEN + "[Epoch " + str(epoch_couter) + "]" + str(robust_preservation) + bcolors.ENDC)
 
             tape_of_moves.append(pruned_pairs)
             pruned_pairs = None
-
-            print(bcolors.OKGREEN + "[Epoch " + str(epoch_couter) + "]" + str(robust_preservation) + bcolors.ENDC)
 
         # Check if have pruned enough number of hidden units
         if BASELINE_MODE and percentage_been_pruned >= 0.5:
@@ -368,6 +377,7 @@ if __name__ == "__main__":
     parser.add_argument('--size', type=int, default=100, help='an integer specifying the number of testing instances to evaluate robustness')
     parser.add_argument('--alpha', type=float, default=0.25, help='the alpha value specifying hyperparameters')
     parser.add_argument('--activation', type=str, default='relu', help='activation function specification')
+    parser.add_argument('--benchmarking', type=int, default=0, help='run in benchmarking mode (pruning w/o evaluation)')
 
     args = parser.parse_args()
     main(args)

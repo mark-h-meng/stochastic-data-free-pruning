@@ -4,16 +4,18 @@ import subprocess
 
 SAMPLES = 500
 
+pruning_only = 0
 activation = 'sigmoid'
 
 if activation == 'sigmoid':
-    hyperparameters = ['0.0'] # L1 norm in sigmoid mode is not important
+    hyperparameters = ['0.0', '0.25'] # L1 norm in sigmoid mode is not important
 else:
     hyperparameters = ['0.5', '0.75']
 
 output = subprocess.call(['python', 'robust_pruning_mlp_mnist.py',
                           '--mode', 'baseline',
                           '--activation', activation,
+                          '--benchmarking', str(pruning_only),
                           '--size', str(SAMPLES)], shell=True)
 
 for index, item in enumerate(hyperparameters):
@@ -21,13 +23,7 @@ for index, item in enumerate(hyperparameters):
                           '--mode', 'stochastic',
                           '--alpha', item,
                           '--activation', activation,
+                          '--benchmarking', str(pruning_only),
                           '--size', str(SAMPLES)], shell=True)
-
-    output = subprocess.call(['python', 'robust_pruning_mlp_mnist.py',
-                          '--mode', 'entropy',
-                          '--alpha', item,
-                          '--activation', activation,
-                          '--size', str(SAMPLES)], shell=True)
-
 
 print('Task accomplished')
