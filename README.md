@@ -10,3 +10,8 @@ You may also execute one of the following source code to run the pruning with FG
 * src/tf_codes/batch_pruning_evaluation_chest.py (Chest X-ray, CNN)
 * src/tf_codes/batch_pruning_evaluation_kaggle.py (Credit Card Fraud, MLP)
 * src/tf_codes/batch_pruning_evaluation_cifar.py (CIFAR-10, CNN)
+
+
+You can also donwload the source code as a ZIP package through the sharing link below:
+
+* https://seto.teracloud.jp/share/1191706bb0b64346 
