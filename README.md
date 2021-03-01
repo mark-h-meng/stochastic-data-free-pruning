@@ -15,3 +15,4 @@ You may also execute one of the following source code to run the pruning with FG
 You can also donwload the source code as a ZIP package through the sharing link below:
 
 * https://seto.teracloud.jp/share/1191706bb0b64346 
+(You don't have to log in to download, just click "continue without logging in" at the bottom)
