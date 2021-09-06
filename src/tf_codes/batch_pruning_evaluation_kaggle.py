@@ -1,22 +1,19 @@
 #!/usr/bin/python3
 
-import subprocess
+import tf_codes.robust_pruning_mlp_kaggle as rp
 
 SAMPLES = 1000
 
-pruning_only = 0
-hyperparameters = ['0.0','0.5','1']
+# Enable benchmarking mode will skip adversarial assessment to speed up the pruning process.
+benchmarking_mode = 0
 
-output = subprocess.call(['python', 'robust_pruning_mlp_kaggle.py',
-                          '--mode', 'baseline',
-                          '--benchmarking', str(pruning_only),
-                          '--size', str(SAMPLES)], shell=True)
+# Hyperparameters provide optional values for the "alpha". 
+hyperparameters = [0.75]
+
+# Omit baseline for the mass testing stage
+rp.robust_pruning(mode='baseline', size=SAMPLES, benchmarking=benchmarking_mode)
 
 for index, item in enumerate(hyperparameters):
-    output = subprocess.call(['python', 'robust_pruning_mlp_kaggle.py',
-                          '--mode', 'stochastic',
-                          '--alpha', item,
-                          '--benchmarking', str(pruning_only),
-                          '--size', str(SAMPLES)], shell=True)
+    rp.robust_pruning(mode='stochastic', size=SAMPLES, benchmarking=benchmarking_mode, alpha=item)
 
 print('Task accomplished')

@@ -64,7 +64,7 @@ def pruning_baseline(model, big_map, prune_percentage=None,
                     saliency_matrix[layer_idx] = saliency.build_saliency_matrix(curr_weights_neuron_as_rows,
                                                                  next_weights_neuron_as_rows)
             else:
-                print(" >> Saliency matrix exists, no need to re-build...")
+                print(" >> Skip building saliency matrix: saliency matrix for layer", layer_idx, "exists.")
 
             import pandas as pd
             df = pd.DataFrame(data=saliency_matrix[layer_idx])
@@ -90,7 +90,8 @@ def pruning_baseline(model, big_map, prune_percentage=None,
             for idx_candidate, pruning_candidate in enumerate(top_candidates):
                 # Extract the indexes of pruning nodes as a tuple (corr. score is no longer useful since this step)
                 (node_a, node_b) = pruning_candidate.index.values[0]
-                '''
+                ''' 
+                # CHANGE on Commit db9c736, to make it consistent with paper
                 # To standarise the pruning operation for the same pair: we always prune the node with smaller index off
                 if node_a > node_b:
                     temp = node_a
@@ -99,18 +100,20 @@ def pruning_baseline(model, big_map, prune_percentage=None,
                 '''
                 pruning_pairs_curr_layer_baseline.append((node_a, node_b))
 
-                # Change all weight connecting from node_b to the next layers as the sum of node_a and node_b's ones
-                #    & Reset all weight connecting from node_a to ZEROs
+                # Change all weight connecting from node_a to the next layers as the sum of node_a and node_b's ones
+                #    & Reset all weight connecting from node_b to ZEROs
                 # RECALL: next_weights_neuron_as_rows = w[layer_idx+1][0] ([0] for weight and [1] for bias)
                 for i in range(0, num_next_neurons):
                     w[layer_idx + 1][0][node_a][i] = w[layer_idx + 1][0][node_b][i] + w[layer_idx + 1][0][node_a][i]
                     w[layer_idx + 1][0][node_b][i] = 0
                 total_pruned_count += 1
 
-                # If recursive mode is enabled, the affected neuron in the current epoch still get a chance to be considered in the next epoch
+                # If recursive mode is enabled, the affected neuron (node_a) in the current epoch still 
+                #   get a chance to be considered in the next epoch. The pruned one (node_b) won't be 
+                #   considered any longer because all its parameters have been zeroed out.
                 if recursive_pruning:
                     if neurons_manipulated[layer_idx] is not None:
-                        neurons_manipulated[layer_idx].remove(node_b)
+                        neurons_manipulated[layer_idx].remove(node_a)
 
             # Save the modified parameters to the model
             model.layers[layer_idx + 1].set_weights(w[layer_idx + 1])
@@ -215,6 +218,7 @@ def pruning_greedy(model, big_map, prune_percentage,
                 (node_a, node_b) = pruning_candidate.index.values[0]
                 # print(" >> Looking into", (node_a, node_b))
                 '''
+                # CHANGE on Commit db9c736, to make it consistent with paper
                 # To standarise the pruning operation for the same pair: we always prune the node with smaller index off
                 if node_a > node_b:
                     temp = node_a
@@ -262,10 +266,12 @@ def pruning_greedy(model, big_map, prune_percentage,
                 if count < num_candidates_to_gen:
                     pruning_pairs_curr_layer_confirmed.append(pair)
 
-                    # If recursive mode is enabled, the affected neuron in the current epoch still get a chance to be considered in the next epoch
+                    # If recursive mode is enabled, the affected neuron (node_a) in the current epoch still 
+                    #   get a chance to be considered in the next epoch. The pruned one (node_b) won't be 
+                    #   considered any longer because all its parameters have been zeroed out.
                     if recursive_pruning:
                         (neuron_a, neuron_b) = pair
-                        neurons_manipulated[layer_idx].remove(neuron_b)
+                        neurons_manipulated[layer_idx].remove(neuron_a)
                 else:
                     # Drop that pair from the neurons_manipulated list and enable re-considering in future epoch
                     (neuron_a, neuron_b) = pair
@@ -426,6 +432,7 @@ def pruning_stochastic(model, big_map, prune_percentage,
                     # print(" >> Looking into", (node_a, node_b))
 
                     '''
+                    # CHANGE on Commit db9c736, to make it consistent with paper
                     # To standarise the pruning operation for the same pair: we always prune the node with smaller index off
                     if node_a > node_b:
                         temp = node_a
@@ -471,10 +478,12 @@ def pruning_stochastic(model, big_map, prune_percentage,
                             target_scores[layer_idx] = curr_score
                             pruning_pairs_curr_layer_confirmed.append((node_a, node_b))
 
-                            # If recursive mode is enabled, the affected neuron in the current epoch still get a chance to be considered in the next epoch
+                            # If recursive mode is enabled, the affected neuron (node_a) in the current epoch still 
+                            #   get a chance to be considered in the next epoch. The pruned one (node_b) won't be 
+                            #   considered any longer because all its parameters have been zeroed out.
                             if recursive_pruning:
-                                if node_b in neurons_manipulated[layer_idx]:
-                                    neurons_manipulated[layer_idx].remove(node_b)
+                                if node_a in neurons_manipulated[layer_idx]:
+                                    neurons_manipulated[layer_idx].remove(node_a)
 
                             count += 1
                             pruning_pairs_dict_overall_scores[layer_idx][(node_a, node_b)] = target_scores[layer_idx]
@@ -486,8 +495,8 @@ def pruning_stochastic(model, big_map, prune_percentage,
                             # Progress is a variable that grows from 0 to 1
                             progress = len(neurons_manipulated[layer_idx])/num_curr_neurons
 
-                            # Define a temperature decending linearly with progress goes on (add 0.01 to avoid divide-by-zero issue)
-                            temperature = 1.01 - progress
+                            # Define a temperature decending linearly with progress goes on (add 0.0001 to avoid divide-by-zero issue)
+                            temperature = 1.0001 - progress
 
                             # Calculate the delta of score (should be a positive value because objective is minimum)
                             delta_score = curr_score - target_scores[layer_idx]
@@ -500,18 +509,22 @@ def pruning_stochastic(model, big_map, prune_percentage,
                                 target_scores[layer_idx] = curr_score
                                 pruning_pairs_curr_layer_confirmed.append((node_a, node_b))
 
-                                # If recursive mode is enabled, the affected neuron in the current epoch still get a chance to be considered in the next epoch
+                                # If recursive mode is enabled, the affected neuron (node_a) in the current epoch still 
+                                #   get a chance to be considered in the next epoch. The pruned one (node_b) won't be 
+                                #   considered any longer because all its parameters have been zeroed out.
                                 if recursive_pruning:
-                                    if node_b in neurons_manipulated[layer_idx]:
-                                        neurons_manipulated[layer_idx].remove(node_b)
+                                    if node_a in neurons_manipulated[layer_idx]:
+                                        neurons_manipulated[layer_idx].remove(node_a)
 
                                 count += 1
                                 pruning_pairs_dict_overall_scores[layer_idx][(node_a, node_b)] = curr_score
 
-                                print(" [DEBUG]", utility.bcolors.OKGREEN, "Accepting (stochastic)", utility.bcolors.ENDC, (node_a, node_b), "despite the score", curr_score, "because the probability", prob_random, "<=", prob_sim_annealing)
+                                print(" [DEBUG]", utility.bcolors.OKGREEN, "Accepting (stochastic)", utility.bcolors.ENDC, (node_a, node_b), "despite the score", 
+                                    round(curr_score, 6), "because the probability", round(prob_random, 6), "<=", round(prob_sim_annealing, 6))
 
                             else:
-                                print(" [DEBUG]", utility.bcolors.FAIL, "Reject", utility.bcolors.ENDC, (node_a, node_b), "because the score", curr_score, ">", target_scores[layer_idx], "and random prob. doesn't satisfy", prob_sim_annealing)
+                                print(" [DEBUG]", utility.bcolors.FAIL, "Reject", utility.bcolors.ENDC, (node_a, node_b), "because the score", 
+                                    round(curr_score, 6), ">", round(target_scores[layer_idx], 6), "and random prob. doesn't satisfy", round(prob_sim_annealing, 6))
                                 # Drop that pair from the neurons_manipulated list and enable re-considering in future epoch
                                 if node_b in neurons_manipulated[layer_idx]:
                                     neurons_manipulated[layer_idx].remove(node_b)

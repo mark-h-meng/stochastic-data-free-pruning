@@ -1,22 +1,20 @@
 #!/usr/bin/python
 
-import subprocess
+import tf_codes.robust_pruning_mlp_chest_xray as rp
 
 SAMPLES = 1000
 
-pruning_only = 0
-hyperparameters = ['0.1',  '0.75']
+# Enable benchmarking mode will skip adversarial assessment to speed up the pruning process
+benchmarking_mode = 0
 
-output = subprocess.call(['python', 'robust_pruning_mlp_chest_xray.py',
-                          '--mode', 'baseline',
-                          '--benchmarking', str(pruning_only),
-                          '--size', str(SAMPLES)], shell=True)
+# Hyperparameters provide optional values for the "alpha". 
+hyperparameters = [0.75]
+
+# Omit baseline for the mass testing stage
+rp.robust_pruning(mode='baseline', size=SAMPLES, batch_size_per_shot=8, benchmarking=benchmarking_mode)
 
 for index, item in enumerate(hyperparameters):
-    output = subprocess.call(['python', 'robust_pruning_mlp_chest_xray.py',
-                          '--mode', 'stochastic',
-                          '--alpha', item,
-                          '--benchmarking', str(pruning_only),
-                          '--size', str(SAMPLES)], shell=True)
+    rp.robust_pruning(mode='stochastic', size=SAMPLES, batch_size_per_shot=8, benchmarking=benchmarking_mode, alpha=item)
 
 print('Task accomplished')
+

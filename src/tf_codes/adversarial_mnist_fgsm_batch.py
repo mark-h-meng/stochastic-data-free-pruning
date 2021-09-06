@@ -2,14 +2,14 @@ import tensorflow as tf
 from tensorflow.keras import datasets, layers, models
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import training_from_data
+import tf_codes.training_from_data as training_from_data
 import random, time, shutil, os
 import numpy as np
 import csv
 import progressbar
 
 import argparse
-import utility.utils as utils
+import tf_codes.utility.utils as utils
 import matplotlib.gridspec as gridspec
 
 mpl.rcParams['figure.figsize'] = (7, 7)
@@ -47,9 +47,15 @@ def image_postprocess(image_tensor, dims=[28, 28]):
     return image_arr
 
 # Helper function to extract labels and confidence from a probability vector
-def interpret_prediction(probs):
-    label = probs.argmax()
-    confidence = probs[label] / sum(probs)
+def interpret_prediction(probs, top=1):
+    if top <= 1:
+        label = probs.argmax()
+        confidence = probs[label] / sum(probs)
+        return label, confidence
+    else:
+        topk_res = tf.nn.top_k(probs, k=top, sorted=True, name=None)
+        label = topk_res.indices.numpy()
+        confidence = topk_res.values.numpy()
     return label, confidence
 
 def create_adversarial_pattern(input_image, input_label, pretrained_model, loss_object):
@@ -87,7 +93,7 @@ def create_adversarial_pattern_kaggle(input_features, input_label, pretrained_mo
     with tf.GradientTape() as tape:
         tape.watch(input_features)
         prediction = pretrained_model(input_features)
-        loss = loss_object(input_label, prediction)
+        loss = loss_object(np.asarray(input_label).astype('float32').reshape((-1,1)), prediction)
 
     # Get the gradients of the loss w.r.t to the input image.
     gradient = tape.gradient(loss, input_features)
@@ -213,6 +219,8 @@ def robustness_evaluation(model, dataset, epsilons, num_iteration):
     ################################
     #  CHOOSING A BENIGN INSTANCE  #
     ################################
+
+    # Here we use a fix range of test samples to ensure fairness of experiments
     sample_indexes = list(range(0, num_iteration))
 
     bar = progressbar.ProgressBar(maxval=num_iteration,
@@ -228,14 +236,20 @@ def robustness_evaluation(model, dataset, epsilons, num_iteration):
             to_display = False
 
         target_images = test_images[sample_index:sample_index + 1]
-
+        target_labels = test_labels[sample_index:sample_index + 1]
         image_probs = model.predict(target_images)
 
         #if to_display:
         #    plt.imshow(target_images[0] * 0.5 + 0.5)  # To change [-1, 1] to [0,1]
 
         image_class, class_confidence = interpret_prediction(image_probs[0])
-
+        
+        # Added on 27 AUG 2022
+        # Experimental code: to see if we should only count those correctly classified samples in adversarial assessment.
+        #    To this end, we only proceed to the next step if the "image_class" equals to the "target_labels[0]."
+        if image_class != target_labels[0]:
+            continue
+        
         ################################
         #  GENERATING PERTURBATIONS    #
         ################################
@@ -317,6 +331,8 @@ def robustness_evaluation_cifar(model, dataset, epsilons, num_iteration):
     ################################
     #  CHOOSING A BENIGN INSTANCE  #
     ################################
+
+    # Here we use a fix range of test samples to ensure fairness of experiments
     sample_indexes = list(range(0, num_iteration))
 
     bar = progressbar.ProgressBar(maxval=num_iteration,
@@ -338,6 +354,12 @@ def robustness_evaluation_cifar(model, dataset, epsilons, num_iteration):
         #plt.imshow(target_images[0])
         #plt.show()
         image_class, class_confidence = interpret_prediction(image_probs[0])
+
+        # Added on 27 AUG 2022
+        # Experimental code: to see if we should only count those correctly classified samples in adversarial assessment.
+        #    To this end, we only proceed to the next step if the "image_class" equals to the "target_labels[0]."
+        if image_class != target_labels[0]:
+            continue
 
         ################################
         #  GENERATING PERTURBATIONS    #
@@ -400,6 +422,117 @@ def robustness_evaluation_cifar(model, dataset, epsilons, num_iteration):
     return robustness_stat_dict
 
 
+def robustness_evaluation_cifar_topK(model, dataset, epsilons, num_iteration, k):
+
+    # The CIFAR-100 dataset contains 60,000 32x32 color images in 100 classes.
+    # There are 50000 training images and 10000 test images.
+    test_images, test_labels = dataset
+
+    if  num_iteration == -1 or num_iteration > len(test_images):
+        num_iteration = len(test_images)
+        print(" >> Number of iteration set to the size of test set, all instances will be tested")
+
+    #################################
+    #      PREPARING LOGGING        #
+    #################################
+    robustness_stat_dict = {}
+    for eps in epsilons:
+        robustness_stat_dict[eps] = 0
+
+    ################################
+    #  CHOOSING A BENIGN INSTANCE  #
+    ################################
+
+    # Here we use a fix range of test samples to ensure fairness of experiments
+    sample_indexes = list(range(0, num_iteration))
+
+    bar = progressbar.ProgressBar(maxval=num_iteration,
+                                  widgets=[progressbar.Bar('=', 'ADVERSARIAL EVALUATION [', ']'), ' ', progressbar.Percentage()])
+    bar.start()
+
+    for sample_index in sample_indexes:
+
+        indexes_to_investigae = []
+        if sample_index in indexes_to_investigae:
+            to_display = True
+        else:
+            to_display = False
+
+        target_images = test_images[sample_index:sample_index + 1]
+        target_labels = test_labels[sample_index:sample_index + 1]
+        image_probs = model.predict(target_images)
+
+        #plt.imshow(target_images[0])
+        #plt.show()
+        image_classes, class_confidences = interpret_prediction(image_probs[0], top=k)
+
+        # Added on 27 AUG 2022
+        # Experimental code: to see if we should only count those correctly classified samples in adversarial assessment.
+        #    To this end, we only proceed to the next step if the "image_class" equals to the "target_labels[0]."
+        if target_labels[0] not in image_classes:
+            continue
+
+        ################################
+        #  GENERATING PERTURBATIONS    #
+        ################################
+
+        loss_object = tf.keras.losses.CategoricalCrossentropy()
+
+        # Get the input label of the image.
+        benign_label = create_one_hot_vector(target_labels[0], dims=image_probs.shape[-1])
+        benign_label = tf.reshape(benign_label, (1, image_probs.shape[-1]))
+        perturbations = create_adversarial_pattern_cifar(target_images, benign_label, model,
+                                                   loss_object)
+
+        # In case there is occurance of ZERO gradient, we xx(randomly)xx -> manually add a sign to the perturbation as either
+        #   a + sign or - sign can increase the objective function (loss)
+        if not force_perturbation_even_zero_gradient and np.count_nonzero(perturbations) == 0:
+            adjusted_perturbations = []
+            for sign in tf.reshape(perturbations[0],(-1)):
+                adjusted_perturbations.append(1.0)
+                # Remove randomization to ensure consistency of cross device experiment
+                #if decision(0.5):
+                #    adjusted_perturbations.append(1.0)
+                #else:
+                #    adjusted_perturbations.append(-1.0)
+            perturbations = tf.sign(adjusted_perturbations)
+
+        if force_perturbation_even_zero_gradient:
+            adjusted_perturbations = []
+            for sign in tf.reshape(perturbations[0],(-1)):
+                if sign == -1:
+                    adjusted_perturbations.append(-1.0)
+                else:
+                    adjusted_perturbations.append(1.0)
+            perturbations = tf.sign(adjusted_perturbations)
+
+        ################################
+        #    GENERATING ADV SAMPLES    #
+        ################################
+        # Let's try this out for different values of epsilon and observe the resultant image
+        # Perturbations here are just sign made up with 0, -1 and +1, an epsilon multiplier is needed.
+        perturbations = tf.reshape(perturbations, target_images[0].shape)
+
+        for i, eps in enumerate(epsilons):
+            perts = eps * perturbations
+            adv_x = create_adversarial_example(target_images[0], perts)
+            if to_display:
+                descriptions = 'Epsilon = {' + str(eps) + '}'
+                adv_class, adv_confidence = attack_and_display_images_cifar(adv_x, model, description=descriptions)
+            else:
+                adv_class, adv_confidence = attack_images_cifar(adv_x, model)
+            # Record the maximum epsilon that the classifier still not to misbehave (still within the top K prediction)
+            if adv_class in image_classes:
+                robustness_stat_dict[eps] = robustness_stat_dict[eps] + 1
+            #else:
+                #print("#",sample_index,"; original label:",target_labels[0],"; attack label:",adv_class, " -- not in top K result", image_classes)
+                #print(str(sample_index), end=" ")
+        bar.update(sample_index)
+    bar.finish()
+
+    return robustness_stat_dict
+
+
 def robustness_evaluation_chest(model, dataset, epsilons, num_iteration):
 
     # The CIFAR-10 dataset contains 60,000 32x32 color images in 10 classes.
@@ -443,6 +576,13 @@ def robustness_evaluation_chest(model, dataset, epsilons, num_iteration):
                                                                                class_names[image_class]))
             plt.show()
         '''
+        
+        # Added on 27 AUG 2022
+        # Experimental code: to see if we should only count those correctly classified samples in adversarial assessment.
+        #    To this end, we only proceed to the next step if the "image_class" equals to the "target_labels[0]."
+        if image_class != target_labels[0]:
+            continue
+
         ################################
         #  GENERATING PERTURBATIONS    #
         ################################
@@ -523,6 +663,8 @@ def robustness_evaluation_kaggle(model, dataset, epsilons, num_iteration):
     ################################
     #  CHOOSING A BENIGN INSTANCE  #
     ################################
+    
+    # Here we use a fix range of test samples to ensure fairness of experiments
     sample_indexes = list(range(0, num_iteration))
 
     bar = progressbar.ProgressBar(maxval=num_iteration,
@@ -538,6 +680,12 @@ def robustness_evaluation_kaggle(model, dataset, epsilons, num_iteration):
         #plt.imshow(target_images[0])
         #plt.show()
         benign_label, class_confidence = interpret_prediction(image_probs[0])
+
+        # Added on 27 AUG 2022
+        # Experimental code: to see if we should only count those correctly classified samples in adversarial assessment.
+        #    To this end, we only proceed to the next step if the "image_class" equals to the "target_labels[0]."
+        if benign_label != target_labels[0]:
+            continue
 
         ################################
         #  GENERATING PERTURBATIONS    #

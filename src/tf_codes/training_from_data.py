@@ -12,6 +12,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import cv2
+from tensorflow.python.keras import activations
 
 seed(42)
 tf.random.set_seed(42)
@@ -20,6 +21,14 @@ tf.random.set_seed(42)
 physical_devices = tf.config.list_physical_devices('GPU')
 if physical_devices:
     tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
+
+def unpickle(file):
+    import pickle
+    with open(file, 'rb') as fo:
+        dict = pickle.load(fo, encoding='latin1')
+    return dict
+
 
 def read_pneumonia_images_from_local(data_path, img_size=64):
     labels = ['PNEUMONIA', 'NORMAL']
@@ -36,6 +45,7 @@ def read_pneumonia_images_from_local(data_path, img_size=64):
             except Exception as e:
                 print(e)
     return np.array(data)
+
 
 def load_data_pneumonia(data_path, img_size = 64):
 
@@ -81,6 +91,7 @@ def load_data_pneumonia(data_path, img_size = 64):
 
     return (x_train, y_train), (x_test, y_test), (x_val, y_val)
 
+
 def load_data_creditcard_from_csv(data_path):
     if os.path.exists(data_path):
         print(">> Local data file found", data_path)
@@ -121,6 +132,47 @@ def load_data_creditcard_from_csv(data_path):
     train_features = np.clip(train_features, -5, 5)
     test_features = np.clip(test_features, -5, 5)
     return (train_features, train_labels), (test_features, test_labels)
+
+
+def load_data_cifar100(data_path):
+    # File paths
+    data_train_path = data_path + 'train'
+    data_test_path = data_path + 'test'
+    data_meta_path = data_path + 'meta'
+
+    # Read dictionary
+    data_train = unpickle(data_train_path)
+    data_test = unpickle(data_test_path)
+    data_meta = unpickle(data_meta_path)
+
+    subCategory = pd.DataFrame(data_meta['fine_label_names'], columns=['SubClass'])
+    subCategoryDict = subCategory.to_dict()
+    
+    superCategory = pd.DataFrame(data_meta['coarse_label_names'], columns=['SuperClass'])
+    superCategoryDict = superCategory.to_dict()
+
+    X_train = data_train['data']
+    y_train=data_train['fine_labels']
+
+    # Usaremos 20% de la data de entrenamiento para validar el desempeño de la red en cada epoch.
+    X_train, X_valid, y_train, y_valid = train_test_split(X_train, y_train, train_size=0.8)
+
+    X_train = X_train.reshape(len(X_train),3,32,32).transpose(0,2,3,1)
+    X_valid = X_valid.reshape(len(X_valid),3,32,32).transpose(0,2,3,1)
+
+    #transforming the testing dataset
+    X_test = data_test['data']
+    X_test = X_test.reshape(len(X_test),3,32,32).transpose(0,2,3,1)
+    y_test = data_test['fine_labels']
+
+    X_train = np.asarray(X_train)
+    y_train = np.asarray(y_train)
+    X_valid = np.asarray(X_valid)
+    y_valid = np.asarray(y_valid)
+    X_test = np.asarray(X_test)
+    y_test = np.asarray(y_test)
+
+    return (X_train, y_train), (X_test, y_test), (X_valid, y_valid), (subCategoryDict, superCategoryDict)
 
 
 def train_creditcard_3_layer_mlp(train_data, test_data, path, overwrite=False,
@@ -263,10 +315,13 @@ def train_cifar_9_layer_cnn(train_data,
                             overwrite=False,
                             use_relu=False,
                             optimizer_config = tf.keras.optimizers.Adam(learning_rate=0.001),
-                            epochs=20):
+                            epochs=20,
+                            topK=1):
 
-    (train_images, train_labels)=train_data
+    (x, y)=train_data
     (test_images, test_labels)=test_data
+
+    train_images, val_images , train_labels, val_labels = train_test_split(x, y, test_size=0.167, train_size=0.833)
 
     # Let's start building a model
     if not os.path.exists(path) or overwrite:
@@ -278,11 +333,11 @@ def train_cifar_9_layer_cnn(train_data,
         model = models.Sequential()
         # In the first layer, please provide the input shape (32,32,3)
         model.add(
-            layers.Conv2D(32, (3, 3), activation='relu', input_shape=(32, 32, 3)))  # Result will be 32 30*30 outputs
+            layers.Conv2D(32, (3, 3), input_shape=(32, 32, 3)))  # Result will be 32 30*30 outputs
         model.add(layers.MaxPooling2D((2, 2)))  # Result will be 32 15*15 outputs
-        model.add(layers.Conv2D(64, (3, 3), activation='relu'))  # Result will be 64 13*13 outputs
+        model.add(layers.Conv2D(64, (3, 3)))  # Result will be 64 13*13 outputs
         model.add(layers.MaxPooling2D((2, 2)))  # Result will be 64 6*6 outputs
-        model.add(layers.Conv2D(64, (3, 3), activation='sigmoid'))  # Result will be 64 4*4 outputs
+        model.add(layers.Conv2D(64, (3, 3), activation='softmax'))  # Result will be 64 4*4 outputs
 
         model.add(layers.Flatten())  # Result will be a vector with length 4*4*64 = 1024
         if use_relu:
@@ -295,25 +350,30 @@ def train_cifar_9_layer_cnn(train_data,
         model.add(layers.Dense(10, activation='softmax'))  # Result will be 10 outputs
 
         print(model.summary())
-        model.compile(optimizer=optimizer_config, loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+        
+        if topK <= 1:
+            model.compile(optimizer=optimizer_config, loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                       metrics=['accuracy'])
+            
+            training_history = model.fit(train_images, train_labels, epochs=epochs,
+                                        validation_data=(val_images, val_labels))
 
-        training_history = model.fit(train_images, train_labels, epochs=epochs,
-                                     validation_data=(test_images, test_labels))
+            test_loss, test_accuracy = model.evaluate(test_images, test_labels, verbose=2)
+            print("Final Accuracy achieved is: ", test_accuracy)
 
-        test_loss, test_accuracy = model.evaluate(test_images, test_labels, verbose=2)
-        print("Final Accuracy achieved is: ", test_accuracy)
+        else:
+            model.compile(optimizer=optimizer_config, 
+                    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                    metrics=['accuracy', tf.keras.metrics.TopKCategoricalAccuracy(k=topK)])
+            
+            training_history = model.fit(train_images, train_labels, epochs=epochs,
+                                        validation_data=(val_images, val_labels))
 
+            test_loss, test_accuracy, test_topk_accuracy = model.evaluate(test_images, test_labels, verbose=2)
+            print("Final Accuracy achieved is: ", test_accuracy, " with top-K accuracy as", test_topk_accuracy)
         model.save(path)
         print("Model has been saved")
 
-        plt.plot(training_history.history['accuracy'], label="Accuracy")
-        plt.plot(training_history.history['val_accuracy'], label='val_accuracy')
-        plt.xlabel('Epoch')
-        plt.ylabel('Accuracy')
-        plt.ylim([0.4, 1])
-        plt.legend(loc='lower right')
-        #plt.show()
     else:
         print("Model found, there is no need to re-train the model ...")
 
@@ -528,6 +588,89 @@ def train_pneumonia_binary_classification_cnn(train_data,
         print("Model found, there is no need to re-train the model ...")
 
 
+def train_cifar_100_9_layer_cnn(train_data,
+                            test_data,
+                            valid_data,
+                            path,
+                            overwrite=False,
+                            use_relu=False,
+                            optimizer_config = tf.keras.optimizers.Adam(learning_rate=0.001),
+                            epochs=30):
+
+    (train_images, train_labels)=train_data
+    (test_images, test_labels)=test_data
+    (valid_images, valid_labels)=valid_data
+
+    # Let's start building a model
+    if not os.path.exists(path) or overwrite:
+        if os.path.exists(path):
+            shutil.rmtree(path)
+            print("TRAIN ANYWAY option enabled, create and train a new one ...")
+        else:
+            print(path, " - model not found, create and train a new one ...")
+        model = models.Sequential()
+        # In the first layer, please provide the input shape (32,32,3)
+        
+        model.add(layers.Conv2D(input_shape=(32, 32, 3), kernel_size=(2, 2), padding='same', strides=(2, 2), filters=32))
+        model.add(layers.MaxPooling2D(pool_size=(2, 2), strides=(1, 1), padding='same'))
+        model.add(layers.Conv2D(kernel_size=(2, 2), padding='same', strides=(2, 2), filters=64))
+        model.add(layers.MaxPooling2D(pool_size=(2, 2), strides=(1, 1), padding='same'))
+        model.add(layers.Conv2D(64, (2, 2), activation='softmax'))  # Result will be 64 4*4 outputs
+        model.add(layers.MaxPooling2D(pool_size=(2, 2), strides=(1, 1), padding='same'))
+        model.add(layers.Flatten())
+
+        if use_relu:
+            model.add(layers.Dense(256, activation='relu'))  # Result will 256 outputs
+            model.add(layers.Dense(128, activation='relu'))  # Result will 128 outputs
+        else:
+            model.add(layers.Dense(256, activation='sigmoid'))  # Result will 64 outputs
+            model.add(layers.Dense(128, activation='sigmoid'))  # Result will 64 outputs
+
+        model.add(layers.Dense(100, activation='softmax'))  # Result will be 10 outputs
+
+        print(model.summary())
+        
+        model.compile(optimizer=optimizer_config, 
+                    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
+                    metrics=['sparse_top_k_categorical_accuracy'])
+        
+                      
+        augmenter = ImageDataGenerator(rescale=1.0/255.,
+                             rotation_range=20,
+                             width_shift_range=0.1, 
+                             height_shift_range=0.1, 
+                             shear_range=0.1, 
+                             zoom_range=0.2, 
+                             fill_mode='nearest',
+                             horizontal_flip=True)
+        rescalator=ImageDataGenerator(rescale=1.0/255.)
+
+        train_generator=augmenter.flow(train_images, train_labels, batch_size=20)
+        valid_generator=rescalator.flow(valid_images, valid_labels, batch_size=20)
+        test_generator=rescalator.flow(test_images, test_labels, batch_size=20)
+
+
+        batch_size=20
+        steps_per_epoch=train_generator.n//batch_size
+        validation_steps=valid_generator.n//batch_size
+
+        training_history = model.fit(train_generator,
+                            steps_per_epoch=steps_per_epoch,
+                            epochs=epochs,
+                            validation_data=valid_generator,
+                            validation_steps=validation_steps
+                            )
+
+        test_loss, test_accuracy = model.evaluate(test_generator, verbose=2)
+        print("Final Accuracy achieved is: ", test_accuracy)
+
+        model.save(path)
+        print("Model has been saved")
+        
+    else:
+        print("Model found, there is no need to re-train the model ...")
+
+
 # DEPRECATED
 def train_cifar_6_layer_mlp(train_data, test_data, path, overwrite=False,
                             optimizer_config = tf.keras.optimizers.Adam(learning_rate=0.001)):
@@ -574,19 +717,17 @@ def train_cifar_6_layer_mlp(train_data, test_data, path, overwrite=False,
     else:
         print("Model found, there is no need to re-train the model ...")
 
-
-
 if __name__ == "__main__":
     dataset = 'xray'
 
     if dataset == 'credit':
-        model_path = 'models/kaggle_mlp_3_layer'
-        data_path = "input/kaggle/creditcard.csv"
+        model_path = 'tf_codes/models/kaggle_mlp_3_layer'
+        data_path = "tf_codes/input/kaggle/creditcard.csv"
         train_data, test_data = load_data_creditcard_from_csv(data_path)
         train_creditcard_3_layer_mlp(train_data, test_data, model_path, overwrite=True)
     elif dataset == 'xray':
-        model_path = 'models/chest_xray_cnn'
-        data_path = "input/chest_xray"
+        model_path = 'tf_codes/models/chest_xray_cnn'
+        data_path = "tf_codes/input/chest_xray"
         train_data, test_data, val_data = load_data_pneumonia(data_path)
         train_pneumonia_binary_classification_cnn(train_data, test_data, model_path, overwrite=True,
                                                   epochs=20, data_augmentation=True)

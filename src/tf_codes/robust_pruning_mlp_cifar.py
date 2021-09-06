@@ -13,12 +13,12 @@ from numpy.random import seed
 import os, time, csv, sys, shutil, math, time
 
 # Import own classes
-import training_from_data
-import pruning
-import utility.bcolors as bcolors
-import utility.utils as utils
-import utility.interval_arithmetic as ia
-import utility.simulated_propagation as simprop
+import tf_codes.training_from_data as training_from_data
+import tf_codes.pruning as pruning
+import tf_codes.utility.utils as utils
+import tf_codes.utility.bcolors as bcolors
+import tf_codes.utility.interval_arithmetic as ia
+import tf_codes.utility.simulated_propagation as simprop
 
 # Specify a random seed
 seed(42)
@@ -26,34 +26,17 @@ tf.random.set_seed(42)
 
 TRAIN_BIGGER_MODEL = True
 
-# Obtain a timestamp
-local_time = time.localtime()
-timestamp = time.strftime('%b-%d-%H%M', local_time)
-
 # Specify the mode of pruning
 BASELINE_MODE = False
 BENCHMARKING_MODE = False
 
 # Recursive mode
 # PS: Baseline should is written in non-recursive mode
-RECURSIVE_PRUNING = True
-
-# E.g. TARGET_PRUNING_PERCENTAGE = 0.3 means 30% of hidden units are expected to be pruned off
-TARGET_PRUNING_PERCENTAGE = 0.8
-
-# E.g. TARGET_ADV_EPSILON = 0.3 means the maximum perturbation epsilon that we expect our pruned
-#    model to preserve is 0.3 (only applicable to normalized input)
-#TARGET_ADV_EPSILONS = [0.01, 0.025, 0.05, 0.1, 0.25]
-TARGET_ADV_EPSILONS = [0.005, 0.01, 0.05]
-
-# E.g. PRUNING_SIZE (PER_EPOCH_PER_LAYER) = 3 means we only choose 2 out of hidden units as the set
-#    of candidates at each layer during each round of pruning
-BATCH_SIZE_PER_PRUNING = 2
-POOLING_MULTIPLIER = 2
+RECURSIVE_PRUNING = False
 
 # E.g. EPOCHS_PER_CHECKPOINT = 5 means we save the pruned model as a checkpoint after each five
 #    epochs and at the end of pruning
-EPOCHS_PER_CHECKPOINT = 15
+EPOCHS_PER_CHECKPOINT = 30
 
 
 class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
@@ -69,27 +52,41 @@ def load_cifar_image_labeling_dataset(normalize=True):
     train_images, test_images = train_images / 255.0, test_images / 255.0
     return (train_images, train_labels), (test_images, test_labels)
 
-def main(args):
-    curr_mode = args.mode
-    BATCH_SIZE_PER_EVALUATION = args.size
-    hyper_parameter_alpha = args.alpha
-    activation = args.activation
-    BENCHMARKING_MODE = args.benchmarking > 0
+def robust_pruning(mode='entropy', size=100, alpha=0.5, activation='relu', benchmarking=0,
+    target_pruning_percentage=0.8, adversarial_epsilons=[0.01, 0.05], batch_size_per_shot=2, pooling_multiplier=4):
+
+    curr_mode = mode
+    BATCH_SIZE_PER_EVALUATION = size
+    hyper_parameter_alpha = alpha
+    activation = activation
+    BENCHMARKING_MODE = benchmarking > 0
 
     hyper_parameter_beta = 1-hyper_parameter_alpha
     hyperparameters = (hyper_parameter_alpha, hyper_parameter_beta)
 
 
-    # ReLU is the default option of activation
+    # ReLU is the default option of activation (will be updated later, just set Ture here)
     use_relu = True
 
-    #curr_mode = 'entropy'
-    #BATCH_SIZE_PER_EVALUATION = 10
+    # E.g. TARGET_PRUNING_PERCENTAGE = 0.3 means 30% of hidden units are expected to be pruned off
+    TARGET_PRUNING_PERCENTAGE = target_pruning_percentage
+
+    # E.g. TARGET_ADV_EPSILON = 0.3 means the maximum perturbation epsilon that we expect our pruned
+    #    model to preserve is 0.3 (only applicable to normalized input)
+    #TARGET_ADV_EPSILONS = [0.01, 0.025, 0.05, 0.1, 0.25]
+    TARGET_ADV_EPSILONS = adversarial_epsilons
+
+    # E.g. PRUNING_SIZE (PER_EPOCH_PER_LAYER) = 3 means we only choose 2 out of hidden units as the set
+    #    of candidates at each layer during each round of pruning
+    BATCH_SIZE_PER_PRUNING = batch_size_per_shot
+    POOLING_MULTIPLIER = pooling_multiplier
+
 
     if curr_mode == 'baseline':
         BASELINE_MODE = True
         print(bcolors.OKCYAN)
         print('>' * 50)
+        print(">> CASE: CIFAR-10 ("+activation+")")
         print(">> BASELINE MODE: pruning by saliency only")
         print(">> ACTIVATION: " + str(activation))
         print(">> EVALUATION BATCH SIZE: " + str(BATCH_SIZE_PER_EVALUATION))
@@ -100,6 +97,7 @@ def main(args):
     elif curr_mode == 'entropy':
         print(bcolors.OKCYAN)
         print('>' * 50)
+        print(">> CASE: CIFAR-10 ("+activation+")")
         BASELINE_MODE = False
         print(">> ENTROPY MODE: pruning by entropy")
         print(">> ACTIVATION: " + str(activation))
@@ -113,6 +111,7 @@ def main(args):
         BASELINE_MODE = False
         print(bcolors.OKCYAN)
         print('>' * 50)
+        print(">> CASE: CIFAR-10 ("+activation+")")
         print(">> STOCHASTIC MODE: pruning by entropy with simulated annealing")
         print(">> EVALUATION BATCH SIZE: " + str(BATCH_SIZE_PER_EVALUATION))
         print(">> HYPER-PARAMETER (ALPHA): " + str(hyper_parameter_alpha))
@@ -129,8 +128,8 @@ def main(args):
         print(bcolors.ENDC)
         return
 
-    utils.create_dir_if_not_exist("logs/")
-    utils.create_dir_if_not_exist("save_figs/")
+    utils.create_dir_if_not_exist("tf_codes/logs/")
+    utils.create_dir_if_not_exist("tf_codes/save_figs/")
 
     # Define a list to record each pruning decision
     tape_of_moves = []
@@ -145,12 +144,8 @@ def main(args):
     epoch_couter = 0
     num_units_pruned = 0
 
-    if TRAIN_BIGGER_MODEL:
-        original_model_path = 'models/cifar_mlp_9_layer'
-        pruned_model_path = 'models/cifar_mlp_pruned_9_layer'
-    else:
-        original_model_path = 'models/cifar_mlp'
-        pruned_model_path = 'models/cifar_mlp_pruned'
+    original_model_path = 'tf_codes/models/cifar_10_cnn'
+    pruned_model_path = 'tf_codes/models/cifar_10_cnn_pruned'
 
     if activation == 'sigmoid':
         original_model_path += '_sigmoid'
@@ -350,11 +345,22 @@ def main(args):
     ################################################################
     # Save the tape of moves                                       #
     ################################################################
-    tape_filename = "logs/cifar-" + timestamp + "-" + str(BATCH_SIZE_PER_EVALUATION) + "-" + activation
+    
+    # Obtain a timestamp
+    local_time = time.localtime()
+    timestamp = time.strftime('%b-%d-%H%M', local_time)
+
+    tape_filename = "tf_codes/logs/cifar-10-" + activation + "-" + timestamp + "-" + str(BATCH_SIZE_PER_EVALUATION)
+    if BENCHMARKING_MODE:
+        tape_filename = tape_filename+"-BENCHMARK"
+
     if BASELINE_MODE:
         tape_filename += "_tape_baseline.csv"
     else:
         tape_filename = tape_filename + "_tape_" + curr_mode + "_" + str(hyper_parameter_alpha) + ".csv"
+
+    if os.path.exists(tape_filename):
+        os.remove(tape_filename)
 
     with open(tape_filename, 'w+', newline='') as csv_file:
         csv_writer = csv.writer(csv_file, delimiter=',')
@@ -369,15 +375,5 @@ def main(args):
             rob_pres_stat.append(accuracy_board[index])
             csv_writer.writerow(rob_pres_stat)
 
-
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(description='batch pruning evaluation')
-    parser.add_argument('--mode', type=str, default='entropy', help='baseline or entropy')
-    parser.add_argument('--size', type=int, default=100, help='an integer specifying the number of testing instances to evaluate robustness')
-    parser.add_argument('--alpha', type=float, default=0.25, help='the alpha value specifying hyperparameters')
-    parser.add_argument('--activation', type=str, default='relu', help='activation function specification')
-    parser.add_argument('--benchmarking', type=int, default=0, help='run in benchmarking mode (pruning w/o evaluation)')
-
-    args = parser.parse_args()
-    main(args)
+        if BENCHMARKING_MODE:
+            csv_writer.writerow(["Elapsed time: ", round((end_time - start_time) / 60.0, 3), "minutes /", int(end_time - start_time), "seconds"])
