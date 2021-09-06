@@ -48,5 +48,6 @@ All the log files recording the pruning details at each step, accuracy and robus
 
 You can also donwload the source code as a ZIP package through the sharing link below (the zipped file contains offline datasets so that it will save your time at the first time execution, while training the original models):
 
-* https://seto.teracloud.jp/share/1191706bb0b64346 
+* https://seto.teracloud.jp/share/1191927ec22cffc3 (apprx. 2.9MB, w/o dataset) OR
+* https://seto.teracloud.jp/share/1191b3ba6777ead3 (apprx. 1.21GB, with Crdit Card Fraud Detection & Chest X-ray dataset)
 (You don't have to log in to download, just click "continue without logging in" at the bottom)
