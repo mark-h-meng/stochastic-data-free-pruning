@@ -26,15 +26,15 @@ You can also run a specific model pruning and robustness evalution by executing 
 
 For the first time execution, our code will train a normal model. As shown in the figure below.
 
-![model training](readme/model-training.gif)
+![model training](img/model-training.gif)
 
 Once the model is trained and saved, our program will start pruning immediately. In case the benchmarking mode is set on, we only perform pruning without robustness assessment. Like the figure shown below.
 
-![model training](readme/pruning-benchmarking-mode.gif)
+![model training](img/pruning-benchmarking-mode.gif)
 
 You can manually set benchmarking off to run a robustness assessment based on FGSM per step during the pruning. Each time we will generate adversarial samples for 1000 test images/data, and then output the number of robust instances, as the meansurement of robustness preservation.
 
-![model training](readme/pruning-robustness-assessment.gif)
+![model training](img/pruning-robustness-assessment.gif)
 
 
 In addition, we also evaluate the robustness in top-K mode (K=3 in our implementation), you may try to run codes below:
